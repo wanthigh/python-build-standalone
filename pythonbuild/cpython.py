@@ -41,6 +41,8 @@ EXTENSION_MODULE_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "targets": {"type": "array", "items": {"type": "string"}},
+                    "minimum-python-version": {"type": "string"},
+                    "maximum-python-version": {"type": "string"},
                 },
                 "additionalProperties": False,
             },
@@ -509,7 +511,10 @@ def derive_setup_local(
             )
 
             if target_match and (python_min_match and python_max_match):
-                line += f" {entry['source']}"
+                if source := entry.get("source"):
+                    line += f" {source}"
+                for source in entry.get("sources", []):
+                    line += f" {source}"
 
         for define in info.get("defines", []):
             line += f" -D{define}"
@@ -534,8 +539,24 @@ def derive_setup_local(
             line += f" -I{path}"
 
         for entry in info.get("includes-conditional", []):
-            if any(re.match(p, target_triple) for p in entry["targets"]):
-                line += f" -I{entry['path']}"
+            if targets := entry.get("targets", []):
+                target_match = any(re.match(p, target_triple) for p in targets)
+            else:
+                target_match = True
+
+            python_min_match = meets_python_minimum_version(
+                python_version, entry.get("minimum-python-version", "1.0")
+            )
+            python_max_match = meets_python_maximum_version(
+                python_version, entry.get("maximum-python-version", "100.0")
+            )
+
+            if target_match and (python_min_match and python_max_match):
+                # TODO: Change to `include` and drop support for `path`
+                if include := entry.get("path"):
+                    line += f" -I{include}"
+                for include in entry.get("includes", []):
+                    line += f" -I{include}"
 
         for path in info.get("includes-deps", []):
             # Includes are added to global search path.
@@ -548,7 +569,19 @@ def derive_setup_local(
             line += " %s" % link_for_target(lib, target_triple)
 
         for entry in info.get("links-conditional", []):
-            if any(re.match(p, target_triple) for p in entry["targets"]):
+            if targets := entry.get("targets", []):
+                target_match = any(re.match(p, target_triple) for p in targets)
+            else:
+                target_match = True
+
+            python_min_match = meets_python_minimum_version(
+                python_version, entry.get("minimum-python-version", "1.0")
+            )
+            python_max_match = meets_python_maximum_version(
+                python_version, entry.get("maximum-python-version", "100.0")
+            )
+
+            if target_match and (python_min_match and python_max_match):
                 line += " %s" % link_for_target(entry["name"], target_triple)
 
         if "-apple-" in target_triple:

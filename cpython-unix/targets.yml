@@ -59,11 +59,12 @@ aarch64-apple-darwin:
   host_platforms:
     - macos
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -148,11 +149,12 @@ aarch64-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -231,6 +233,8 @@ armv7-unknown-linux-gnueabi:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -269,6 +273,8 @@ armv7-unknown-linux-gnueabihf:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -303,11 +309,12 @@ i686-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -351,6 +358,8 @@ mips-unknown-linux-gnu:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -389,6 +398,8 @@ mipsel-unknown-linux-gnu:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -427,6 +438,8 @@ ppc64le-unknown-linux-gnu:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -457,6 +470,46 @@ ppc64le-unknown-linux-gnu:
     - zlib
   openssl_target: linux-ppc64le
 
+riscv64-unknown-linux-gnu:
+  host_platforms:
+    - linux64
+  pythons_supported:
+    - '3.9'
+    - '3.10'
+    - '3.11'
+    - '3.12'
+    - '3.13'
+    - '3.14'
+  docker_image_suffix: .cross-riscv64
+  host_cc: /usr/bin/x86_64-linux-gnu-gcc
+  host_cxx: /usr/bin/x86_64-linux-gnu-g++
+  target_cc: /usr/bin/riscv64-linux-gnu-gcc
+  needs:
+    - autoconf
+    - bdb
+    - binutils
+    - bzip2
+    - expat
+    - libedit
+    - libffi
+    - libX11
+    - libXau
+    - libxcb
+    - m4
+    - mpdecimal
+    - ncurses
+    - openssl-3.0
+    - patchelf
+    - sqlite
+    - tcl
+    - tk
+    - tix
+    - uuid
+    - xorgproto
+    - xz
+    - zlib
+  openssl_target: linux64-riscv64
+
 s390x-unknown-linux-gnu:
   host_platforms:
     - linux64
@@ -465,6 +518,8 @@ s390x-unknown-linux-gnu:
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   docker_image_suffix: .cross
   host_cc: /usr/bin/x86_64-linux-gnu-gcc
   host_cxx: /usr/bin/x86_64-linux-gnu-g++
@@ -537,17 +592,18 @@ thumb7k-apple-watchos:
 
 # Intel macOS.
 #
-# We target compatibility with macOS 10.9+ for compatibility with older Apple
+# We target compatibility with macOS 10.15+ for compatibility with older Apple
 # machines.
 x86_64-apple-darwin:
   host_platforms:
     - macos
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   apple_sdk_platform: macosx
   host_cc: clang
@@ -556,7 +612,7 @@ x86_64-apple-darwin:
   target_cflags:
     - '-arch'
     - 'x86_64'
-    - '-mmacosx-version-min=10.9'
+    - '-mmacosx-version-min=10.15'
     # Suppress extremely verbose warnings we see with LLVM 10.
     - '-Wno-nullability-completeness'
     - '-Wno-expansion-to-defined'
@@ -571,7 +627,7 @@ x86_64-apple-darwin:
   target_ldflags:
     - '-arch'
     - 'x86_64'
-    - '-mmacosx-version-min=10.9'
+    - '-mmacosx-version-min=10.15'
   needs:
     - autoconf
     - bzip2
@@ -712,11 +768,12 @@ x86_64-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -756,11 +813,12 @@ x86_64_v2-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -801,11 +859,12 @@ x86_64_v3-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -846,11 +905,12 @@ x86_64_v4-unknown-linux-gnu:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -891,11 +951,12 @@ x86_64-unknown-linux-musl:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -933,11 +994,12 @@ x86_64_v2-unknown-linux-musl:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -976,11 +1038,12 @@ x86_64_v3-unknown-linux-musl:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++
@@ -1019,11 +1082,12 @@ x86_64_v4-unknown-linux-musl:
   host_platforms:
     - linux64
   pythons_supported:
-    - '3.8'
     - '3.9'
     - '3.10'
     - '3.11'
     - '3.12'
+    - '3.13'
+    - '3.14'
   needs_toolchain: true
   host_cc: clang
   host_cxx: clang++

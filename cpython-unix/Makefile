@@ -4,13 +4,16 @@ OUTDIR := $(ROOT)/build
 
 BUILD := $(HERE)/build.py
 NULL :=
+SPACE := $(subst ,, )
+
+ALL_PYTHON_VERSIONS := 3.9 3.10 3.11 3.12 3.13 3.14
 
 ifndef PYBUILD_TARGET_TRIPLE
     $(error PYBUILD_TARGET_TRIPLE not defined)
 endif
 
-ifndef PYBUILD_OPTIMIZATIONS
-    $(error PYBUILD_OPTIMIZATIONS not defined)
+ifndef PYBUILD_BUILD_OPTIONS
+    $(error PYBUILD_BUILD_OPTIONS not defined)
 endif
 
 ifndef PYBUILD_HOST_PLATFORM
@@ -25,18 +28,16 @@ ifndef PYBUILD_PYTHON_VERSION
     $(error PYBUILD_PYTHON_VERSION not defined)
 endif
 
-ifndef PYBUILD_PYTHON_MAJOR_VERSION
-    $(error PYBUILD_PYTHON_MAJOR_VERSION not defined)
-endif
+PYTHON_MAJOR_VERSION := $(subst $(SPACE),.,$(wordlist 1,2,$(subst .,$(SPACE),$(PYBUILD_PYTHON_VERSION))))
 
 TARGET_TRIPLE := $(PYBUILD_TARGET_TRIPLE)
 HOST_PLATFORM := $(PYBUILD_HOST_PLATFORM)
-PACKAGE_SUFFIX := $(TARGET_TRIPLE)-$(PYBUILD_OPTIMIZATIONS)
+PACKAGE_SUFFIX := $(TARGET_TRIPLE)-$(PYBUILD_BUILD_OPTIONS)
 
 RUN_BUILD = $(BUILD) \
     --host-platform $(HOST_PLATFORM) \
     --target-triple $(TARGET_TRIPLE) \
-    --optimizations $(PYBUILD_OPTIMIZATIONS) \
+    --options $(PYBUILD_BUILD_OPTIONS) \
     --python-source $(PYBUILD_PYTHON_SOURCE) \
     --dest-archive $@ \
     $(NULL)
@@ -47,7 +48,7 @@ endif
 
 # Always write out settings files.
 $(shell $(RUN_BUILD) placeholder_archive makefiles)
-include $(OUTDIR)/Makefile.$(HOST_PLATFORM).$(TARGET_TRIPLE).$(PYBUILD_PYTHON_MAJOR_VERSION)
+include $(OUTDIR)/Makefile.$(HOST_PLATFORM).$(TARGET_TRIPLE)
 include $(OUTDIR)/versions/VERSION.*
 
 # Always write out expanded Dockerfiles.
@@ -69,7 +70,7 @@ PYTHON_DEP_DEPENDS := \
     $(TOOLCHAIN_DEPENDS) \
     $(NULL)
 
-default: $(OUTDIR)/cpython-$(PYBUILD_PYTHON_VERSION)-$(PACKAGE_SUFFIX).tar
+default: $(OUTDIR)/cpython-$(CPYTHON_$(PYTHON_MAJOR_VERSION)_VERSION)-$(PACKAGE_SUFFIX).tar
 
 ifndef PYBUILD_NO_DOCKER
 $(OUTDIR)/image-%.tar: $(OUTDIR)/%.Dockerfile
@@ -255,66 +256,48 @@ PYTHON_HOST_DEPENDS := \
   $(OUTDIR)/m4-$(M4_VERSION)-$(PACKAGE_SUFFIX).tar \
   $(NULL)
 
-$(OUTDIR)/cpython-3.8-$(CPYTHON_3.8_VERSION)-$(HOST_PLATFORM).tar: $(PYTHON_HOST_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.8-host
+# Each X.Y Python version has its own set of variables and targets. This independent
+# definition allows multiple Python versions to be built using the same Makefile
+# invocation.
+define python_version_template
+PYTHON_DEPENDS_$(1) := \
+    $$(PYTHON_SUPPORT_FILES) \
+    $$(OUTDIR)/versions/VERSION.pip \
+    $$(OUTDIR)/versions/VERSION.setuptools \
+    $$(OUTDIR)/cpython-$(1)-$$(CPYTHON_$(1)_VERSION)-$$(HOST_PLATFORM).tar \
+    $$(if$$(NEED_AUTOCONF),$$(OUTDIR)/autoconf-$$(AUTOCONF_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_BDB),$$(OUTDIR)/bdb-$$(BDB_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_BZIP2),$$(OUTDIR)/bzip2-$$(BZIP2_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_EXPAT),$$(OUTDIR)/expat-$$(EXPAT_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_LIBEDIT),$$(OUTDIR)/libedit-$$(LIBEDIT_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_LIBFFI_3_3),$$(OUTDIR)/libffi-3.3-$$(LIBFFI_3.3_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_LIBFFI),$$(OUTDIR)/libffi-$$(LIBFFI_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_m4),$$(OUTDIR)/m4-$$(M4_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_MPDECIMAL),$$(OUTDIR)/mpdecimal-$$(MPDECIMAL_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_NCURSES),$$(OUTDIR)/ncurses-$$(NCURSES_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_OPENSSL_1_1),$$(OUTDIR)/openssl-1.1-$$(OPENSSL_1.1_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_OPENSSL_3_0),$$(OUTDIR)/openssl-3.0-$$(OPENSSL_3.0_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_PATCHELF),$$(OUTDIR)/patchelf-$$(PATCHELF_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_SQLITE),$$(OUTDIR)/sqlite-$$(SQLITE_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_TCL),$$(OUTDIR)/tcl-$$(TCL_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_TK),$$(OUTDIR)/tk-$$(TK_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_TIX),$$(OUTDIR)/tix-$$(TIX_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_UUID),$$(OUTDIR)/uuid-$$(UUID_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_XZ),$$(OUTDIR)/xz-$$(XZ_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(if $$(NEED_ZLIB),$$(OUTDIR)/zlib-$$(ZLIB_VERSION)-$$(PACKAGE_SUFFIX).tar) \
+    $$(NULL)
 
-$(OUTDIR)/cpython-3.9-$(CPYTHON_3.9_VERSION)-$(HOST_PLATFORM).tar: $(PYTHON_HOST_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.9-host
+ALL_PYTHON_DEPENDS_$(1) = \
+    $$(PYTHON_DEP_DEPENDS) \
+    $$(HERE)/build-cpython.sh \
+    $$(PYTHON_DEPENDS_$(1)) \
+    $$(NULL)
 
-$(OUTDIR)/cpython-3.10-$(CPYTHON_3.10_VERSION)-$(HOST_PLATFORM).tar: $(PYTHON_HOST_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.10-host
+$$(OUTDIR)/cpython-$(1)-$$(CPYTHON_$(1)_VERSION)-$$(HOST_PLATFORM).tar: $$(PYTHON_HOST_DEPENDS)
+	$$(RUN_BUILD) --docker-image $$(DOCKER_IMAGE_BUILD) cpython-$(1)-host
 
-$(OUTDIR)/cpython-3.11-$(CPYTHON_3.11_VERSION)-$(HOST_PLATFORM).tar: $(PYTHON_HOST_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.11-host
+$$(OUTDIR)/cpython-$$(CPYTHON_$(1)_VERSION)-$$(PACKAGE_SUFFIX).tar: $$(ALL_PYTHON_DEPENDS_$(1))
+	$$(RUN_BUILD) --docker-image $$(DOCKER_IMAGE_BUILD) cpython-$(1)
+endef
 
-$(OUTDIR)/cpython-3.12-$(CPYTHON_3.12_VERSION)-$(HOST_PLATFORM).tar: $(PYTHON_HOST_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.12-host
-
-
-PYTHON_DEPENDS := \
-    $(PYTHON_SUPPORT_FILES) \
-    $(OUTDIR)/versions/VERSION.pip \
-    $(OUTDIR)/versions/VERSION.setuptools \
-    $(OUTDIR)/cpython-$(PYBUILD_PYTHON_MAJOR_VERSION)-$(PYBUILD_PYTHON_VERSION)-$(HOST_PLATFORM).tar \
-    $(if $(NEED_AUTOCONF),$(OUTDIR)/autoconf-$(AUTOCONF_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_BDB),$(OUTDIR)/bdb-$(BDB_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_BZIP2),$(OUTDIR)/bzip2-$(BZIP2_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_EXPAT),$(OUTDIR)/expat-$(EXPAT_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_LIBEDIT),$(OUTDIR)/libedit-$(LIBEDIT_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_LIBFFI_3_3),$(OUTDIR)/libffi-3.3-$(LIBFFI_3.3_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_LIBFFI),$(OUTDIR)/libffi-$(LIBFFI_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_m4),$(OUTDIR)/m4-$(M4_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_MPDECIMAL),$(OUTDIR)/mpdecimal-$(MPDECIMAL_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_NCURSES),$(OUTDIR)/ncurses-$(NCURSES_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_OPENSSL_1_1),$(OUTDIR)/openssl-1.1-$(OPENSSL_1.1_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_OPENSSL_3_0),$(OUTDIR)/openssl-3.0-$(OPENSSL_3.0_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_PATCHELF),$(OUTDIR)/patchelf-$(PATCHELF_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_SQLITE),$(OUTDIR)/sqlite-$(SQLITE_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_TCL),$(OUTDIR)/tcl-$(TCL_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_TK),$(OUTDIR)/tk-$(TK_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_TIX),$(OUTDIR)/tix-$(TIX_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_UUID),$(OUTDIR)/uuid-$(UUID_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_XZ),$(OUTDIR)/xz-$(XZ_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(if $(NEED_ZLIB),$(OUTDIR)/zlib-$(ZLIB_VERSION)-$(PACKAGE_SUFFIX).tar) \
-    $(NULL)
-
-ALL_PYTHON_DEPENDS = \
-    $(PYTHON_DEP_DEPENDS) \
-    $(HERE)/build-cpython.sh \
-    $(PYTHON_DEPENDS) \
-    $(NULL)
-
-$(OUTDIR)/cpython-$(CPYTHON_3.8_VERSION)-$(PACKAGE_SUFFIX).tar: $(ALL_PYTHON_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.8
-
-$(OUTDIR)/cpython-$(CPYTHON_3.9_VERSION)-$(PACKAGE_SUFFIX).tar: $(ALL_PYTHON_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.9
-
-$(OUTDIR)/cpython-$(CPYTHON_3.10_VERSION)-$(PACKAGE_SUFFIX).tar: $(ALL_PYTHON_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.10
-
-$(OUTDIR)/cpython-$(CPYTHON_3.11_VERSION)-$(PACKAGE_SUFFIX).tar: $(ALL_PYTHON_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.11
-
-$(OUTDIR)/cpython-$(CPYTHON_3.12_VERSION)-$(PACKAGE_SUFFIX).tar: $(ALL_PYTHON_DEPENDS)
-	$(RUN_BUILD) --docker-image $(DOCKER_IMAGE_BUILD) cpython-3.12
+$(foreach local_version,$(ALL_PYTHON_VERSIONS),$(eval $(call python_version_template,$(local_version))))

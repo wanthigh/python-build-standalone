@@ -12,7 +12,9 @@ import multiprocessing
 import os
 import pathlib
 import platform
+import random
 import stat
+import string
 import subprocess
 import sys
 import tarfile
@@ -44,10 +46,10 @@ def supported_targets(yaml_path: pathlib.Path):
     targets = set()
 
     for target, settings in get_targets(yaml_path).items():
-        for platform in settings["host_platforms"]:
-            if sys.platform == "linux" and platform == "linux64":
+        for host_platform in settings["host_platforms"]:
+            if sys.platform == "linux" and host_platform == "linux64":
                 targets.add(target)
-            elif sys.platform == "darwin" and platform == "macos":
+            elif sys.platform == "darwin" and host_platform == "macos":
                 targets.add(target)
 
     return targets
@@ -61,7 +63,7 @@ def target_needs(yaml_path: pathlib.Path, target: str, python_version: str):
 
     # We only ship libedit linked readline extension on 3.10+ to avoid a GPL
     # dependency.
-    if not python_version.startswith(("3.8", "3.9")):
+    if not python_version.startswith("3.9"):
         needs.discard("readline")
 
     return needs
@@ -141,35 +143,37 @@ def write_triples_makefiles(
 
     for triple, settings in targets.items():
         for host_platform in settings["host_platforms"]:
-            for python in settings["pythons_supported"]:
-                makefile_path = dest_dir / (
-                    "Makefile.%s.%s.%s" % (host_platform, triple, python)
-                )
+            # IMPORTANT: if we ever vary the content of these Makefiles by
+            # Python versions, the variable names will need add the Python
+            # version and the Makefile references updated to point to specific
+            # versions. If we don't do that, multi-version builds will fail
+            # to work correctly.
 
-                lines = []
-                for need in settings.get("needs", []):
-                    lines.append(
-                        "NEED_%s := 1\n"
-                        % need.upper().replace("-", "_").replace(".", "_")
-                    )
+            makefile_path = dest_dir / ("Makefile.%s.%s" % (host_platform, triple))
 
-                image_suffix = settings.get("docker_image_suffix", "")
-
-                lines.append("DOCKER_IMAGE_BUILD := build%s\n" % image_suffix)
-                lines.append("DOCKER_IMAGE_XCB := xcb%s\n" % image_suffix)
-
-                entry = clang_toolchain(host_platform, triple)
+            lines = []
+            for need in settings.get("needs", []):
                 lines.append(
-                    "CLANG_FILENAME := %s-%s-%s.tar\n"
-                    % (entry, DOWNLOADS[entry]["version"], host_platform)
+                    "NEED_%s := 1\n" % need.upper().replace("-", "_").replace(".", "_")
                 )
 
-                lines.append(
-                    "PYTHON_SUPPORT_FILES := $(PYTHON_SUPPORT_FILES) %s\n"
-                    % (support_search_dir / "extension-modules.yml")
-                )
+            image_suffix = settings.get("docker_image_suffix", "")
 
-                write_if_different(makefile_path, "".join(lines).encode("ascii"))
+            lines.append("DOCKER_IMAGE_BUILD := build%s\n" % image_suffix)
+            lines.append("DOCKER_IMAGE_XCB := xcb%s\n" % image_suffix)
+
+            entry = clang_toolchain(host_platform, triple)
+            lines.append(
+                "CLANG_FILENAME := %s-%s-%s.tar\n"
+                % (entry, DOWNLOADS[entry]["version"], host_platform)
+            )
+
+            lines.append(
+                "PYTHON_SUPPORT_FILES := $(PYTHON_SUPPORT_FILES) %s\n"
+                % (support_search_dir / "extension-modules.yml")
+            )
+
+            write_if_different(makefile_path, "".join(lines).encode("ascii"))
 
 
 def write_package_versions(dest_path: pathlib.Path):
@@ -209,6 +213,10 @@ def write_target_settings(targets, dest_path: pathlib.Path):
 
 class IntegrityError(Exception):
     """Represents an integrity error when downloading a URL."""
+
+    def __init__(self, *args, length: int):
+        self.length = length
+        super().__init__(*args)
 
 
 def secure_download_stream(url, size, sha256):
@@ -269,7 +277,15 @@ def download_to_path(url: str, path: pathlib.Path, size: int, sha256: str):
 
         path.unlink()
 
-    tmp = path.with_name("%s.tmp" % path.name)
+    # Need to write to random path to avoid race conditions. If there is a
+    # race, worst case we'll download the same file N>1 times. Meh.
+    tmp = path.with_name(
+        "%s.tmp%s"
+        % (
+            path.name,
+            "".join(random.choices(string.ascii_uppercase + string.digits, k=8)),
+        )
+    )
 
     for attempt in range(5):
         try:
@@ -279,9 +295,13 @@ def download_to_path(url: str, path: pathlib.Path, size: int, sha256: str):
                         fh.write(chunk)
 
                 break
-            except IntegrityError:
+            except IntegrityError as e:
                 tmp.unlink()
-                raise
+                # If we didn't get most of the expected file, retry
+                if e.length > size * 0.75:
+                    raise
+                print(f"Integrity error on {url}; retrying: {e}")
+                time.sleep(2**attempt)
         except http.client.HTTPException as e:
             print(f"HTTP exception on {url}; retrying: {e}")
             time.sleep(2**attempt)
@@ -305,9 +325,7 @@ def download_entry(key: str, dest_path: pathlib.Path, local_name=None) -> pathli
     assert isinstance(size, int)
     assert isinstance(sha256, str)
 
-    local_name = local_name or url[url.rindex("/") + 1 :]
-
-    local_path = dest_path / local_name
+    local_path = dest_path / (local_name or url[url.rindex("/") + 1 :])
     download_to_path(url, local_path, size, sha256)
 
     return local_path
@@ -416,7 +434,7 @@ def clang_toolchain(host_platform: str, target_triple: str) -> str:
         if "musl" in target_triple:
             return "llvm-14-x86_64-linux"
         else:
-            return "llvm-17-x86_64-linux"
+            return "llvm-19-x86_64-linux"
     elif host_platform == "macos":
         if platform.mac_ver()[2] == "arm64":
             return "llvm-aarch64-macos"
@@ -466,7 +484,7 @@ def add_licenses_to_extension_entry(entry):
         if "path_static" in link or "path_dynamic" in link:
             have_local_link = True
 
-        for key, value in DOWNLOADS.items():
+        for value in DOWNLOADS.values():
             if name not in value.get("library_names", []):
                 continue
 

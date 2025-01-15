@@ -58,7 +58,16 @@ optimizations
    Known values include ``debug``, ``noopt``, ``pgo``, ``lto``, and
    ``pgo+lto``.
 
-   (Version 5 or above only.)
+   (Deprecated in version 8 in favor of ``build_options``.)
+
+build_options
+   String indicating what build options were used. Options are separated
+   by a ``+``.
+
+   Known values include ``debug``, ``noopt``, ``pgo``, ``lto``, and
+   ``freethreading``.
+
+   (Version 8 or above only.)
 
 os
    Target operating system for the distribution. e.g. ``linux``, ``macos``,
@@ -73,12 +82,12 @@ arch
    (Deprecated in version 5 in favor of ``target_triple``.)
 
 python_tag
-   The PEP 425 *Python Tag* value. e.g. ``cp38``.
+   The PEP 425 *Python Tag* value. e.g. ``cp313``.
 
    (Version 5 or above only.)
 
 python_abi_tag
-   The PEP 425 *ABI Tag* value. e.g. ``cp37m``.
+   The PEP 425 *ABI Tag* value. e.g. ``cp313m``.
 
    This may be null if the distribution's platform doesn't expose the concept
    of an ABI tag.
@@ -127,7 +136,7 @@ python_implementation_version
    (Version 5 or above only.)
 
 python_version
-   Version of Python distribution. e.g. ``3.8.2``.
+   Version of Python distribution. e.g. ``3.13.0``.
 
 python_major_minor_version
    ``X.Y`` version string consisting of Python major and minor version.
@@ -214,7 +223,7 @@ python_suffixes
    ``extension``
       Suffixes for extension modules. Corresponds to
       ``importlib.machinery.EXTENSION_SUFFIXES``. e.g.
-      ``[".cpython-38-x86_64-linux-gnu.so", ".abi3.so", ".so"]``.
+      ``[".cpython-313-x86_64-linux-gnu.so", ".abi3.so", ".so"]``.
 
    ``optimized_bytecode``
       Suffixes for optimized bytecode modules. Corresponds to

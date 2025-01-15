@@ -11,6 +11,7 @@ import platform
 import subprocess
 import sys
 
+from pythonbuild.cpython import meets_python_minimum_version
 from pythonbuild.downloads import DOWNLOADS
 from pythonbuild.utils import (
     compress_python_archive,
@@ -41,7 +42,7 @@ def main():
         else:
             raise Exception("unhandled macOS machine value: %s" % machine)
     else:
-        print("unsupport build platform: %s" % sys.platform)
+        print("Unsupported build platform: %s" % sys.platform)
         return 1
 
     parser = argparse.ArgumentParser()
@@ -53,20 +54,22 @@ def main():
         help="Target host triple to build for",
     )
 
+    optimizations = {"debug", "noopt", "pgo", "lto", "pgo+lto"}
     parser.add_argument(
-        "--optimizations",
-        choices={"debug", "noopt", "pgo", "lto", "pgo+lto"},
+        "--options",
+        choices=optimizations.union({f"freethreaded+{o}" for o in optimizations}),
         default="noopt",
-        help="Optimizations to apply when compiling Python",
+        help="Build options to apply when compiling Python",
     )
     parser.add_argument(
         "--python",
         choices={
-            "cpython-3.8",
             "cpython-3.9",
             "cpython-3.10",
             "cpython-3.11",
             "cpython-3.12",
+            "cpython-3.13",
+            "cpython-3.14",
         },
         default="cpython-3.11",
         help="Python distribution to build",
@@ -100,9 +103,11 @@ def main():
             "toolchain",
             "toolchain-image-build",
             "toolchain-image-build.cross",
+            "toolchain-image-build.cross-riscv64",
             "toolchain-image-gcc",
             "toolchain-image-xcb",
             "toolchain-image-xcb.cross",
+            "toolchain-image-xcb.cross-riscv64",
         },
         default="default",
         help="The make target to evaluate",
@@ -135,7 +140,7 @@ def main():
 
     env["PYBUILD_HOST_PLATFORM"] = host_platform
     env["PYBUILD_TARGET_TRIPLE"] = target_triple
-    env["PYBUILD_OPTIMIZATIONS"] = args.optimizations
+    env["PYBUILD_BUILD_OPTIONS"] = args.options
     env["PYBUILD_PYTHON_SOURCE"] = python_source
     if musl:
         env["PYBUILD_MUSL"] = "1"
@@ -155,17 +160,27 @@ def main():
             return 1
         cpython_version = env["PYBUILD_PYTHON_VERSION"]
 
-    env["PYBUILD_PYTHON_MAJOR_VERSION"] = ".".join(cpython_version.split(".")[0:2])
+    python_majmin = ".".join(cpython_version.split(".")[0:2])
 
     if "PYBUILD_RELEASE_TAG" in os.environ:
         release_tag = os.environ["PYBUILD_RELEASE_TAG"]
     else:
         release_tag = release_tag_from_git()
 
+    # Guard against accidental misuse of the free-threaded flag with older versions
+    if "freethreaded" in args.options and not meets_python_minimum_version(
+        python_majmin, "3.13"
+    ):
+        print(
+            "Invalid build option: 'freethreaded' is only compatible with CPython 3.13+ (got %s)"
+            % cpython_version
+        )
+        return 1
+
     archive_components = [
         "cpython-%s" % cpython_version,
         target_triple,
-        args.optimizations,
+        args.options,
     ]
 
     build_basename = "-".join(archive_components) + ".tar"

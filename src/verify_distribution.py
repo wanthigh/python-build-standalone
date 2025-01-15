@@ -113,7 +113,7 @@ class TestPythonInterpreter(unittest.TestCase):
     def test_sqlite(self):
         import sqlite3
 
-        self.assertEqual(sqlite3.sqlite_version_info, (3, 45, 1))
+        self.assertEqual(sqlite3.sqlite_version_info, (3, 47, 1))
 
         # Optional SQLite3 features are enabled.
         conn = sqlite3.connect(":memory:")
@@ -135,11 +135,25 @@ class TestPythonInterpreter(unittest.TestCase):
         if os.name == "nt" and sys.version_info[0:2] < (3, 11):
             wanted_version = (1, 1, 1, 23, 15)
         else:
-            wanted_version = (3, 0, 0, 13, 0)
+            wanted_version = (3, 0, 0, 15, 0)
 
         self.assertEqual(ssl.OPENSSL_VERSION_INFO, wanted_version)
 
         ssl.create_default_context()
+
+    @unittest.skipIf(
+        sys.version_info[:2] < (3, 13),
+        "Free-threaded builds are only available in 3.13+",
+    )
+    def test_gil_disabled(self):
+        import sysconfig
+
+        if "freethreaded" in os.environ.get("BUILD_OPTIONS", "").split("+"):
+            wanted = 1
+        else:
+            wanted = 0
+
+        self.assertEqual(sysconfig.get_config_var("Py_GIL_DISABLED"), wanted)
 
     @unittest.skipIf("TCL_LIBRARY" not in os.environ, "TCL_LIBRARY not set")
     @unittest.skipIf("DISPLAY" not in os.environ, "DISPLAY not set")

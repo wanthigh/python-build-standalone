@@ -3,7 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use {
-    crate::release::{produce_install_only, RELEASE_TRIPLES},
+    crate::release::{
+        bootstrap_llvm, produce_install_only, produce_install_only_stripped, RELEASE_TRIPLES,
+    },
     anyhow::{anyhow, Result},
     bytes::Bytes,
     clap::ArgMatches,
@@ -14,15 +16,38 @@ use {
         Octocrab, OctocrabBuilder,
     },
     rayon::prelude::*,
+    reqwest::{Client, StatusCode},
+    reqwest_middleware::{self, ClientWithMiddleware},
+    reqwest_retry::{
+        default_on_request_failure, policies::ExponentialBackoff, RetryTransientMiddleware,
+        Retryable, RetryableStrategy,
+    },
     sha2::{Digest, Sha256},
     std::{
         collections::{BTreeMap, BTreeSet, HashMap},
         io::Read,
         path::PathBuf,
+        str::FromStr,
     },
     url::Url,
     zip::ZipArchive,
 };
+
+/// A retry strategy for GitHub uploads.
+struct GitHubUploadRetryStrategy;
+impl RetryableStrategy for GitHubUploadRetryStrategy {
+    fn handle(
+        &self,
+        res: &std::result::Result<reqwest::Response, reqwest_middleware::Error>,
+    ) -> Option<Retryable> {
+        match res {
+            // Retry on 403s, these indicate a transient failure.
+            Ok(success) if success.status() == StatusCode::FORBIDDEN => Some(Retryable::Transient),
+            Ok(_) => None,
+            Err(error) => default_on_request_failure(error),
+        }
+    }
+}
 
 async fn fetch_artifact(
     client: &Octocrab,
@@ -30,7 +55,7 @@ async fn fetch_artifact(
     repo: &str,
     artifact: WorkflowListArtifact,
 ) -> Result<bytes::Bytes> {
-    println!("downloading {}", artifact.name);
+    println!("downloading artifact {}", artifact.name);
 
     let res = client
         .actions()
@@ -41,6 +66,7 @@ async fn fetch_artifact(
 }
 
 async fn upload_release_artifact(
+    client: &ClientWithMiddleware,
     auth_token: String,
     release: &Release,
     filename: String,
@@ -48,7 +74,7 @@ async fn upload_release_artifact(
     dry_run: bool,
 ) -> Result<()> {
     if release.assets.iter().any(|asset| asset.name == filename) {
-        println!("release asset {} already present; skipping", filename);
+        println!("release asset {filename} already present; skipping");
         return Ok(());
     }
 
@@ -61,17 +87,16 @@ async fn upload_release_artifact(
 
     url.query_pairs_mut().clear().append_pair("name", &filename);
 
-    println!("uploading to {}", url);
-
-    // Octocrab doesn't yet support release artifact upload. And the low-level HTTP API
-    // forces the use of strings on us. So we have to make our own HTTP client.
+    println!("uploading to {url}");
 
     if dry_run {
         return Ok(());
     }
 
-    let response = reqwest::Client::builder()
-        .build()?
+    // Octocrab doesn't yet support release artifact upload. And the low-level HTTP API
+    // forces the use of strings on us. So we have to make our own HTTP client.
+
+    let response = client
         .put(url)
         .header("Authorization", format!("Bearer {auth_token}"))
         .header("Content-Length", data.len())
@@ -104,6 +129,8 @@ pub async fn command_fetch_release_distributions(args: &ArgMatches) -> Result<()
         )
         .build()?;
 
+    let release_version_range = pep440_rs::VersionSpecifier::from_str(">=3.9")?;
+
     let workflows = client.workflows(org, repo);
 
     let mut workflow_names = HashMap::new();
@@ -116,11 +143,11 @@ pub async fn command_fetch_release_distributions(args: &ArgMatches) -> Result<()
         .filter_map(|wf| {
             if matches!(
                 wf.path.as_str(),
-                ".github/workflows/apple.yml"
+                ".github/workflows/macos.yml"
                     | ".github/workflows/linux.yml"
                     | ".github/workflows/windows.yml"
             ) {
-                workflow_names.insert(wf.id.clone(), wf.name);
+                workflow_names.insert(wf.id, wf.name);
 
                 Some(wf.id)
             } else {
@@ -138,26 +165,27 @@ pub async fn command_fetch_release_distributions(args: &ArgMatches) -> Result<()
     let mut runs: Vec<octocrab::models::workflows::Run> = vec![];
 
     for workflow_id in workflow_ids {
+        let commit = args
+            .get_one::<String>("commit")
+            .expect("commit should be defined");
+        let workflow_name = workflow_names
+            .get(&workflow_id)
+            .expect("should have workflow name");
+
         runs.push(
             workflows
-                .list_runs(format!("{}", workflow_id))
+                .list_runs(format!("{workflow_id}"))
                 .event("push")
                 .status("success")
                 .send()
                 .await?
                 .into_iter()
                 .find(|run| {
-                    run.head_sha.as_str()
-                        == args
-                            .get_one::<String>("commit")
-                            .expect("commit should be defined")
+                    run.head_sha.as_str() == commit
                 })
                 .ok_or_else(|| {
                     anyhow!(
-                        "could not find workflow run for commit for workflow {}",
-                        workflow_names
-                            .get(&workflow_id)
-                            .expect("should have workflow name")
+                        "could not find workflow run for commit {commit} for workflow {workflow_name}",
                     )
                 })?,
         );
@@ -204,58 +232,79 @@ pub async fn command_fetch_release_distributions(args: &ArgMatches) -> Result<()
 
             let name = zf.name().to_string();
 
+            let parts = name.split('-').collect::<Vec<_>>();
+
+            if parts[0] != "cpython" {
+                println!("ignoring {} not a cpython artifact", name);
+                continue;
+            };
+
+            let python_version = pep440_rs::Version::from_str(parts[1])?;
+            if !release_version_range.contains(&python_version) {
+                println!(
+                    "{} not in release version range {}",
+                    name, release_version_range
+                );
+                continue;
+            }
+
             // Iterate over `RELEASE_TRIPLES` in reverse-order to ensure that if any triple is a
             // substring of another, the longest match is used.
-            if let Some((triple, release)) = RELEASE_TRIPLES.iter().rev().find_map(|(triple, release)| {
-                if name.contains(triple) {
-                    Some((triple, release))
-                } else {
-                    None
-                }
-            }) {
-                let stripped_name = if let Some(s) = name.strip_suffix(".tar.zst") {
-                    s
-                } else {
-                    println!("{} not a .tar.zst artifact", name);
-                    continue;
-                };
+            let Some((triple, release)) =
+                RELEASE_TRIPLES.iter().rev().find_map(|(triple, release)| {
+                    if name.contains(triple) {
+                        Some((triple, release))
+                    } else {
+                        None
+                    }
+                })
+            else {
+                println!(
+                    "ignoring {} does not match any registered release triples",
+                    name
+                );
+                continue;
+            };
 
-                let stripped_name = &stripped_name[0..stripped_name.len() - "-YYYYMMDDTHHMM".len()];
-
-                let triple_start = stripped_name
-                    .find(triple)
-                    .expect("validated triple presence above");
-
-                let build_suffix = &stripped_name[triple_start + triple.len() + 1..];
-
-                if !release
-                    .suffixes
-                    .iter()
-                    .any(|suffix| build_suffix == *suffix)
-                {
-                    println!("{} not a release artifact for triple", name);
-                    continue;
-                }
-
-                let dest_path = dest_dir.join(&name);
-                let mut buf = vec![];
-                zf.read_to_end(&mut buf)?;
-                std::fs::write(&dest_path, &buf)?;
-
-                println!("releasing {}", name);
-
-                if build_suffix == release.install_only_suffix {
-                    install_paths.push(dest_path);
-                }
+            let stripped_name = if let Some(s) = name.strip_suffix(".tar.zst") {
+                s
             } else {
-                println!("{} does not match any registered release triples", name);
+                println!("ignoring {} not a .tar.zst artifact", name);
+                continue;
+            };
+
+            let stripped_name = &stripped_name[0..stripped_name.len() - "-YYYYMMDDTHHMM".len()];
+
+            let triple_start = stripped_name
+                .find(triple)
+                .expect("validated triple presence above");
+
+            let build_suffix = &stripped_name[triple_start + triple.len() + 1..];
+
+            if !release.suffixes(None).any(|suffix| build_suffix == suffix) {
+                println!("ignoring {} not a release artifact for triple", name);
+                continue;
+            }
+
+            let dest_path = dest_dir.join(&name);
+            let mut buf = vec![];
+            zf.read_to_end(&mut buf)?;
+            std::fs::write(&dest_path, &buf)?;
+
+            println!("prepared {} for release", name);
+
+            if build_suffix == release.install_only_suffix {
+                install_paths.push(dest_path);
             }
         }
     }
 
+    let llvm_dir = bootstrap_llvm().await?;
+
     install_paths
         .par_iter()
         .try_for_each(|path| -> Result<()> {
+            // Create the `install_only` archive.
             println!(
                 "producing install_only archive from {}",
                 path.file_name()
@@ -263,10 +312,29 @@ pub async fn command_fetch_release_distributions(args: &ArgMatches) -> Result<()
                     .to_string_lossy()
             );
 
-            let dest_path = produce_install_only(&path)?;
+            let dest_path = produce_install_only(path)?;
 
             println!(
-                "releasing {}",
+                "prepared {} for release",
+                dest_path
+                    .file_name()
+                    .expect("should have file name")
+                    .to_string_lossy()
+            );
+
+            // Create the `install_only_stripped` archive.
+            println!(
+                "producing install_only_stripped archive from {}",
+                dest_path
+                    .file_name()
+                    .expect("should have file name")
+                    .to_string_lossy()
+            );
+
+            let dest_path = produce_install_only_stripped(&dest_path, &llvm_dir)?;
+
+            println!(
+                "prepared {} for release",
                 dest_path
                     .file_name()
                     .expect("should have file name")
@@ -302,8 +370,7 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
         .expect("repo should be specified");
     let dry_run = args.get_flag("dry_run");
 
-    let mut filenames = std::fs::read_dir(&dist_dir)?
-        .into_iter()
+    let mut filenames = std::fs::read_dir(dist_dir)?
         .map(|x| {
             let path = x?.path();
             let filename = path
@@ -329,14 +396,14 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
     let mut wanted_filenames = BTreeMap::new();
     for version in python_versions {
         for (triple, release) in RELEASE_TRIPLES.iter() {
+            let python_version = pep440_rs::Version::from_str(version)?;
             if let Some(req) = &release.python_version_requirement {
-                let python_version = semver::Version::parse(version)?;
-                if !req.matches(&python_version) {
+                if !req.contains(&python_version) {
                     continue;
                 }
             }
 
-            for suffix in &release.suffixes {
+            for suffix in release.suffixes(Some(&python_version)) {
                 wanted_filenames.insert(
                     format!(
                         "cpython-{}-{}-{}-{}.tar.zst",
@@ -356,6 +423,17 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
                 ),
                 format!("cpython-{}+{}-{}-install_only.tar.gz", version, tag, triple),
             );
+
+            wanted_filenames.insert(
+                format!(
+                    "cpython-{}-{}-install_only_stripped-{}.tar.gz",
+                    version, triple, datetime
+                ),
+                format!(
+                    "cpython-{}+{}-{}-install_only_stripped.tar.gz",
+                    version, tag, triple
+                ),
+            );
         }
     }
 
@@ -367,8 +445,10 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
     for f in &missing {
         println!("missing release artifact: {}", f);
     }
-    if !missing.is_empty() && !ignore_missing {
-        return Err(anyhow!("missing release artifacts"));
+    if missing.is_empty() {
+        println!("found all {} release artifacts", wanted_filenames.len());
+    } else if !ignore_missing {
+        return Err(anyhow!("missing {} release artifacts", missing.len()));
     }
 
     let client = OctocrabBuilder::new()
@@ -380,50 +460,66 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
     let release = if let Ok(release) = releases.get_by_tag(tag).await {
         release
     } else {
-        return Err(anyhow!(
-            "release {} does not exist; create it via GitHub web UI",
-            tag
-        ));
+        return if dry_run {
+            println!("release {tag} does not exist; exiting dry-run mode...");
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "release {tag} does not exist; create it via GitHub web UI"
+            ))
+        };
     };
 
     let mut digests = BTreeMap::new();
 
-    let mut fs = vec![];
+    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(5);
+    let raw_client = reqwest_middleware::ClientBuilder::new(Client::new())
+        .with(RetryTransientMiddleware::new_with_policy_and_strategy(
+            retry_policy,
+            GitHubUploadRetryStrategy,
+        ))
+        .build();
 
-    for (source, dest) in wanted_filenames {
-        if !filenames.contains(&source) {
-            continue;
+    {
+        let mut fs = vec![];
+
+        for (source, dest) in wanted_filenames {
+            if !filenames.contains(&source) {
+                continue;
+            }
+
+            let file_data = Bytes::copy_from_slice(&std::fs::read(dist_dir.join(&source))?);
+
+            let mut digest = Sha256::new();
+            digest.update(&file_data);
+
+            let digest = hex::encode(digest.finalize());
+
+            digests.insert(dest.clone(), digest.clone());
+
+            fs.push(upload_release_artifact(
+                &raw_client,
+                token.clone(),
+                &release,
+                dest.clone(),
+                file_data,
+                dry_run,
+            ));
+            fs.push(upload_release_artifact(
+                &raw_client,
+                token.clone(),
+                &release,
+                format!("{}.sha256", dest),
+                Bytes::copy_from_slice(format!("{}\n", digest).as_bytes()),
+                dry_run,
+            ));
         }
 
-        let file_data = Bytes::copy_from_slice(&std::fs::read(dist_dir.join(&source))?);
+        let mut buffered = futures::stream::iter(fs).buffer_unordered(16);
 
-        let mut digest = Sha256::new();
-        digest.update(&file_data);
-
-        let digest = hex::encode(digest.finalize());
-
-        digests.insert(dest.clone(), digest.clone());
-
-        fs.push(upload_release_artifact(
-            token.clone(),
-            &release,
-            dest.clone(),
-            file_data,
-            dry_run,
-        ));
-        fs.push(upload_release_artifact(
-            token.clone(),
-            &release,
-            format!("{}.sha256", dest),
-            Bytes::copy_from_slice(format!("{}\n", digest).as_bytes()),
-            dry_run,
-        ));
-    }
-
-    let mut buffered = futures::stream::iter(fs).buffer_unordered(16);
-
-    while let Some(res) = buffered.next().await {
-        res?;
+        while let Some(res) = buffered.next().await {
+            res?;
+        }
     }
 
     let shasums = digests
@@ -435,6 +531,7 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
     std::fs::write(dist_dir.join("SHA256SUMS"), shasums.as_bytes())?;
 
     upload_release_artifact(
+        &raw_client,
         token.clone(),
         &release,
         "SHA256SUMS".to_string(),
@@ -445,6 +542,11 @@ pub async fn command_upload_release_distributions(args: &ArgMatches) -> Result<(
 
     // Check that content wasn't munged as part of uploading. This once happened
     // and created a busted release. Never again.
+    if dry_run {
+        println!("skipping SHA256SUMs check");
+        return Ok(());
+    }
+
     let release = releases
         .get_by_tag(tag)
         .await

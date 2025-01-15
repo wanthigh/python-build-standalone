@@ -1,13 +1,23 @@
-name: Linux Python build
+name: linux
 
 on:
   push:
+    branches: [main]
   pull_request:
-  schedule:
-    - cron: '13 11 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_COLOR: 1
+
 jobs:
   pythonbuild:
-    runs-on: ubuntu-22.04
+    if: ${{ needs.generate-matrix.outputs.pythonbuild_changed == 'true' || needs.generate-matrix.outputs.any_builds == 'true' || github.ref == 'refs/heads/main' }}
+    needs:
+      - generate-matrix
+    runs-on: depot-ubuntu-22.04
     steps:
       - name: Install System Dependencies
         run: |
@@ -15,11 +25,6 @@ jobs:
           sudo apt install -y --no-install-recommends libssl-dev pkg-config
 
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
 
       - name: Emit rustc version
         run: |
@@ -44,16 +49,22 @@ jobs:
           path: target/release/pythonbuild
 
   image:
+    if: ${{ needs.generate-matrix.outputs.any_builds == 'true' }}
+    needs:
+      - generate-matrix
     strategy:
       fail-fast: false
       matrix:
         image:
           - build
           - build.cross
+          - build.cross-riscv64
           - gcc
           - xcb
           - xcb.cross
-    runs-on: ubuntu-22.04
+          - xcb.cross-riscv64
+    name: ${{ matrix.image }}
+    runs-on: depot-ubuntu-22.04
     permissions:
       packages: write
     steps:
@@ -113,734 +124,70 @@ jobs:
           name: image-${{ matrix.image }}
           path: build/image-*
 
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        build:
-          # Cross-compiles can't do PGO.
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'debug'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'noopt'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'lto'
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix-0: ${{ steps.set-matrix.outputs.matrix-0 }}
+      matrix-1: ${{ steps.set-matrix.outputs.matrix-1 }}
+      any_builds: ${{ steps.set-matrix.outputs.any_builds }}
+      pythonbuild_changed: ${{ steps.changed.outputs.pythonbuild_any_changed }}
+    steps:
+      - uses: actions/checkout@v4
 
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v4
 
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
+      - name: Get pull request labels
+        id: get-labels
+        run: |
+          # Convert GitHub labels array to comma-separated string
+          LABELS=$(echo '${{ toJson(github.event.pull_request.labels.*.name) }}' | jq -r 'join(",")')
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
 
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
+      - name: Generate build matrix
+        id: set-matrix
+        run: |
+          uv run ci-matrix.py \
+            --platform linux \
+            --labels '${{ steps.get-labels.outputs.labels }}' \
+            --max-shards 2 \
+            > matrix.json
 
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'aarch64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
+          echo "matrix-0=$(jq -c '.["0"]' matrix.json)" >> $GITHUB_OUTPUT
+          echo "matrix-1=$(jq -c '.["1"]' matrix.json)" >> $GITHUB_OUTPUT
 
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
+          # Display the matrix for debugging too
+          cat matrix.json | jq
 
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
+          if jq -e '.["0"].include | length > 0' matrix.json > /dev/null; then
+            # Build matrix has entries
+            echo "any_builds=true" >> $GITHUB_OUTPUT
+          else
+            # Build matrix is empty
+            echo "any_builds=false" >> $GITHUB_OUTPUT
+          fi
 
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
+      - uses: tj-actions/changed-files@v45
+        id: changed
+        with:
+          files_yaml: |
+            pythonbuild:
+              - "src/*.rs"
 
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabi'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'armv7-unknown-linux-gnueabihf'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'mips-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'mipsel-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 's390x-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # Cross-compiles can't do PGO and require Python 3.9.
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'ppc64le-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # We don't publish noopt builds when PGO is available.
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.8'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'pgo+lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'pgo+lto'
-            run: true
-
-          # GitHub Actions runners don't support x86-64-v4 so we can't PGO.
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          # GitHub Actions runners don't support x86-64-v4 so we can't PGO.
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-gnu'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
-          # musl doesn't support PGO.
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.8'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.8'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.8'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v2-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-            run: true
-          - target_triple: 'x86_64_v3-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-            run: true
-
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.9'
-            optimizations: 'lto'
-
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.10'
-            optimizations: 'lto'
-
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.11'
-            optimizations: 'lto'
-
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'debug'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'noopt'
-          - target_triple: 'x86_64_v4-unknown-linux-musl'
-            py: 'cpython-3.12'
-            optimizations: 'lto'
-
+  build-0:
     needs:
+      - generate-matrix
       - pythonbuild
       - image
-    runs-on: ubuntu-22.04
+    # Permissions used for actions/attest-build-provenance
+    permissions:
+      id-token: write
+      attestations: write
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix-0) }}
+      fail-fast: false
+    name: ${{ matrix.target_triple }} / ${{ matrix.python }} / ${{ matrix.build_options }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -877,6 +224,7 @@ jobs:
           done
 
       - name: Build
+        if: ${{ ! matrix.dry-run }}
         run: |
           # Do empty target so all generated files are touched.
           ./build-linux.py --make-target empty
@@ -884,20 +232,106 @@ jobs:
           # Touch mtimes of all images so they are newer than autogenerated files above.
           touch build/image-*
 
-          ./build-linux.py --target-triple ${{ matrix.build.target_triple }} --python ${{ matrix.build.py }} --optimizations ${{ matrix.build.optimizations }}
+          ./build-linux.py --target-triple ${{ matrix.target_triple }} --python cpython-${{ matrix.python }} --options ${{ matrix.build_options }}
 
       - name: Validate Distribution
+        if: ${{ ! matrix.dry-run }}
         run: |
           chmod +x build/pythonbuild
 
-          if [ -n "${{matrix.build.run}}" ]; then
+          if [ "${{ matrix.run }}" == "true" ]; then
             EXTRA_ARGS="--run"
           fi
 
           build/pythonbuild validate-distribution ${EXTRA_ARGS} dist/*.tar.zst
 
       - name: Upload Distribution
+        if: ${{ ! matrix.dry-run }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.build.py }}-${{ matrix.build.target_triple }}-${{ matrix.build.optimizations }}
+          name: cpython-${{ matrix.python }}-${{ matrix.target_triple }}-${{ matrix.build_options }}
+          path: dist/*
+
+  build-1:
+    needs:
+      - generate-matrix
+      - pythonbuild
+      - image
+    # Permissions used for actions/attest-build-provenance
+    permissions:
+      id-token: write
+      attestations: write
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix-1) }}
+      fail-fast: false
+    name: ${{ matrix.target_triple }} / ${{ matrix.python }} / ${{ matrix.build_options }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download pythonbuild
+        uses: actions/download-artifact@v4
+        with:
+          name: pythonbuild
+          path: build
+
+      - name: Download images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: build
+          merge-multiple: true
+
+      - name: Load Docker Images
+        run: |
+          for f in build/image-*.tar.zst; do
+            echo "decompressing $f"
+            zstd -d --rm ${f}
+          done
+
+          for f in build/image-*.tar; do
+            echo "loading $f"
+            docker load --input $f
+          done
+
+      - name: Build
+        if: ${{ ! matrix.dry-run }}
+        run: |
+          # Do empty target so all generated files are touched.
+          ./build-linux.py --make-target empty
+
+          # Touch mtimes of all images so they are newer than autogenerated files above.
+          touch build/image-*
+
+          ./build-linux.py --target-triple ${{ matrix.target_triple }} --python cpython-${{ matrix.python }} --options ${{ matrix.build_options }}
+
+      - name: Validate Distribution
+        if: ${{ ! matrix.dry-run }}
+        run: |
+          chmod +x build/pythonbuild
+
+          if [ "${{ matrix.run }}" == "true" ]; then
+            EXTRA_ARGS="--run"
+          fi
+
+          build/pythonbuild validate-distribution ${EXTRA_ARGS} dist/*.tar.zst
+
+      - name: Generate attestations
+        uses: actions/attest-build-provenance@v2
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          subject-path: dist/*
+
+      - name: Upload Distribution
+        if: ${{ ! matrix.dry-run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpython-${{ matrix.python }}-${{ matrix.target_triple }}-${{ matrix.build_options }}
           path: dist/*

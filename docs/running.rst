@@ -151,9 +151,17 @@ Common configurations include:
    A debug build. No optimizations.
 
 The archive flavor denotes the content in the archive. See
-:ref:`distributions` for more. Casual users will likely want to use the
-``install_only`` archive, as most users do not need the build artifacts
-present in the ``full`` archive.
+:ref:`distributions` for more.
+
+Casual users will likely want to use the ``install_only`` archive, as most
+users do not need the build artifacts present in the ``full`` archive.
+The ``install_only`` archive doesn't include the build configuration in its
+file name. It's based on the fastest available build configuration for a given
+target.
+
+An ``install_only_stripped`` archive is also available. This archive is
+equivalent to ``install_only``, but without debug symbols, which results in a
+smaller download and on-disk footprint.
 
 Extracting Distributions
 ========================
@@ -237,8 +245,7 @@ Windows
 Windows distributions model the requirements of the official Python
 distributions:
 
-* Windows 7 or Windows Server 2012 or newer on Python 3.8.
-* Windows 8 or Windows Server 2012 or newer on Python 3.9+.
+* Windows 8 or Windows Server 2012 or newer
 
 Windows binaries have a dependency on the Microsoft Visual C++ Redistributable,
 likely from MSVC 2015 (``vcruntime140.dll``). This dependency is not
@@ -251,7 +258,7 @@ Extra Python Software
 Python installations have some additional software pre-installed:
 
 * `pip <https://pypi.org/project/pip/>`_
-* `setuptools <https://pypi.org/project/setuptools/>`_
+* `setuptools <https://pypi.org/project/setuptools/>`_ (for Python 3.11 and older)
 
 The intent of the pre-installed software is to facilitate end-user
 package installation without having to first bootstrap a packaging
